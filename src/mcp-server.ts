@@ -86,6 +86,31 @@ export function clampEndToNow(end: string | undefined, now: Date = new Date()): 
 	return new Date(end).getTime() > now.getTime() ? now.toISOString() : end;
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * El rango que se le pide a WHOOP. Un `end` de solo fecha ("2026-10-16") se lee como
+ * "hasta ese día incluido" (exclusivo al día siguiente): los modelos piden "hoy" con
+ * start = end = la fecha, y WHOOP responde 400 a un rango vacío. Un `end` que no queda
+ * después de `start` se descarta (WHOOP usa "ahora"), y el futuro se recorta a ahora.
+ */
+export function resolveRange(
+	start: string | undefined,
+	end: string | undefined,
+	now: Date = new Date(),
+): { start: string | undefined; end: string | undefined } {
+	const from = normalizeInstant(start);
+	let to = normalizeInstant(end);
+	if (to !== undefined && DATE_ONLY.test(end!.trim())) {
+		to = new Date(new Date(to).getTime() + 24 * 60 * 60 * 1000).toISOString();
+	}
+	to = clampEndToNow(to, now);
+	if (from !== undefined && to !== undefined && new Date(to).getTime() <= new Date(from).getTime()) {
+		to = undefined;
+	}
+	return { start: from, end: to };
+}
+
 export const collectionInput = z.object({
 	start: isoInstant
 		.optional()
@@ -131,8 +156,7 @@ async function run(fn: () => Promise<unknown>): Promise<TextResult> {
 
 function collection(resolveApi: WhoopApiResolver, endpoint: string, args: CollectionInput): Promise<unknown> {
 	const params: CollectionParams = {
-		start: normalizeInstant(args.start),
-		end: clampEndToNow(normalizeInstant(args.end)),
+		...resolveRange(args.start, args.end),
 		limit: args.limit ?? 10,
 		nextToken: sanitizeNextToken(args.nextToken),
 	};
